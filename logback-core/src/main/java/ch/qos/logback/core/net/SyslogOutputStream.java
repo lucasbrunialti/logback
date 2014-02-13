@@ -16,78 +16,90 @@ package ch.qos.logback.core.net;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.Socket;
 import java.net.SocketException;
 import java.net.UnknownHostException;
 
 /**
- * SyslogOutputStream is a wrapper around the {@link DatagramSocket} class so that it
- * behaves like an {@link OutputStream}.
+ * SyslogOutputStream is a wrapper around the {@link DatagramSocket} class so
+ * that it behaves like an {@link OutputStream}.
  */
 public class SyslogOutputStream extends OutputStream {
 
-  /**
-   * The maximum length after which we discard the existing string buffer and
-   * start anew.
-   */
-  private static final int MAX_LEN = 1024;
+	private InetAddress address;
+	private ByteArrayOutputStream baos = new ByteArrayOutputStream();
+	final private int port;
 
-  private InetAddress address;
-  private DatagramSocket ds;
-  private ByteArrayOutputStream baos = new ByteArrayOutputStream();
-  final private int port;
+	private Socket socket;
 
-  public SyslogOutputStream(String syslogHost, int port) throws UnknownHostException,
-      SocketException {
-    this.address = InetAddress.getByName(syslogHost);
-    this.port = port;
-    this.ds = new DatagramSocket();
-  }
+	public SyslogOutputStream(String syslogHost, int port)
+			throws UnknownHostException, SocketException {
+		this.address = InetAddress.getByName(syslogHost);
+		this.port = port;
 
-  public void write(byte[] byteArray, int offset, int len) throws IOException {
-    baos.write(byteArray, offset, len);
-  }
+		try {
+			this.socket = new Socket(address, port);
+		} catch (IOException e) {
+			throw new SocketException();
+		}
+	}
 
-  public void flush() throws IOException {
-    byte[] bytes = baos.toByteArray();
-    DatagramPacket packet = new DatagramPacket(bytes, bytes.length, address,
-        port);
+	public void write(byte[] byteArray, int offset, int len) throws IOException {
+		baos.write(byteArray, offset, len);
+	}
 
-    // clean up for next round
-    if (baos.size() > MAX_LEN) {
-      baos = new ByteArrayOutputStream();
-    } else {
-      baos.reset();
-    }
-    
-    // after a failure, it can happen that bytes.length is zero
-    // in that case, there is no point in sending out an empty message/
-    if(bytes.length == 0) {
-      return;
-    }
-    if (this.ds != null) {
-      ds.send(packet);
-    }
-  
-  }
+	public void flush() throws IOException {
+		byte[] bytes = baos.toByteArray();
 
-  public void close() {
-    address = null;
-    ds = null;
-  }
+		// after a failure, it can happen that bytes.length is zero
+		// in that case, there is no point in sending out an empty message/
+		if (bytes.length == 0) {
+			return;
+		}
 
-  public int getPort() {
-    return port;
-  }
+		if (socket == null || socket.isClosed() || socket.isOutputShutdown()
+				|| !socket.isConnected()) {
+			System.out.println("Lost connection.");
+			throw new IOException();
+		}
 
-  @Override
-  public void write(int b) throws IOException {
-    baos.write(b);
-  }
+		// clean up for next round
+		baos = new ByteArrayOutputStream();
+		baos.reset();
 
-  int getSendBufferSize() throws SocketException {
-    return ds.getSendBufferSize();
-  }
+		try {
+			socket.getOutputStream().write(bytes);
+			socket.getOutputStream().flush();
+		} catch (SocketException e) {
+			System.out.println("Caught socket exception while writing to socket: "
+							+ e);
+			throw new IOException(e);
+		} catch (IOException e) {
+			System.out.println("Caught io exception while writing to socket: "
+					+ e);
+			throw e;
+		}
+
+	}
+
+	public void close() throws IOException {
+		address = null;
+		if (socket != null)
+			socket.close();
+	}
+
+	public int getPort() {
+		return port;
+	}
+
+	@Override
+	public void write(int b) throws IOException {
+		baos.write(b);
+	}
+
+	int getSendBufferSize() throws SocketException {
+		return socket.getSendBufferSize();
+	}
 }
